@@ -42,11 +42,15 @@ document.getElementById("go").onclick = async () => {
       add(true, `systems list: ${all.length} systems; Memphis/Shelby: ${sys.map(x => `${x.shortName} (“${x.name}”)`).join(", ") || "none found"}`);
     }
   } catch (e) { add(false, "systems list blocked: " + e.message); }
-  if (!sys.length) { const m = prompt("Type the system name from the OpenMHz page address (openmhz.com/system/NAME):"); if (m) sys = [{ shortName: m.trim() }]; }
+  if (!sys.some(x => x.shortName === "memphis")) sys.unshift({ shortName: "memphis" });
   for (const s of sys.slice(0, 3)) {
     try {
-      const [st, j, raw] = await getJSON(`${API}/${s.shortName}/calls`);
-      if (!j) { add(false, `${s.shortName} calls: HTTP ${st}, not JSON (${raw})`); continue; }
+      let st, j, raw;
+      for (const ep of ["calls", "calls/latest"]) {
+        try { [st, j, raw] = await getJSON(`${API}/${s.shortName}/${ep}`); add(!!j, `${s.shortName}/${ep}: HTTP ${st}${j ? "" : ", not JSON (" + raw + ")"}`); if (j) break; }
+        catch (e) { add(false, `${s.shortName}/${ep} blocked: ${e.message}`); }
+      }
+      if (!j) continue;
       const calls = j.calls || [];
       add(true, `${s.shortName} calls: ${calls.length} recent; newest ${calls[0] ? new Date(calls[0].time).toLocaleTimeString() : "-"}; keys: ${Object.keys(calls[0] || {}).join(",")}`);
       const c = calls[0];
