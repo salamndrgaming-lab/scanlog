@@ -114,10 +114,23 @@ label{display:block;margin:12px 0 4px;font-size:13px;color:var(--dim)}
   <section data-view="setup" hidden>
     <form id="setupForm" autocomplete="off">
       <div class="card">
+        <h3 style="margin-top:0">This device</h3>
+        <div class="seg">
+          <label><input type="radio" name="role" value="station"><span>Listen &amp; log</span></label>
+          <label><input type="radio" name="role" value="viewer"><span>View PC's log</span></label>
+        </div>
+        <p class="hint" data-when="role=station">This device listens and transcribes. Add a sync passphrase to show its log live on your phone.</p>
+        <p class="hint" data-when="role=viewer">Shows the live log from your PC. Use the same passphrase you set on the PC.</p>
+        <label for="syncKey">Sync passphrase</label>
+        <input id="syncKey" name="syncKey" type="password" placeholder="Same on PC and phone (6+ characters)">
+      </div>
+
+      <div class="card" data-when="role=station">
         <h3 style="margin-top:0">Audio source</h3>
         <div class="seg">
           <label><input type="radio" name="source" value="stream"><span>Online feed</span></label>
           <label><input type="radio" name="source" value="mic"><span>Microphone</span></label>
+          <label><input type="radio" name="source" value="tab"><span>Browser tab</span></label>
         </div>
         <div data-when="source=stream">
           <label for="feed">Broadcastify feed ID or stream URL</label>
@@ -127,6 +140,7 @@ label{display:block;margin:12px 0 4px;font-size:13px;color:var(--dim)}
           <input id="relay" name="relay" inputmode="url" placeholder="https://scanlog-relay.you.workers.dev">
           <div class="row"><label for="monitor">Play audio while logging</label><input type="checkbox" id="monitor" name="monitor"></div>
         </div>
+        <p class="hint" data-when="source=tab">On a computer in Chrome or Edge: play the feed in another tab (e.g. Broadcastify's player), tap Start listening, pick that tab and keep “Share tab audio” on.</p>
         <p class="hint" data-when="source=mic">Put the phone next to a scanner radio, or next to another device playing a feed. Works with any audio, no setup.</p>
         <label for="channel">Channel label</label>
         <input id="channel" name="channel" placeholder="MPD / SCSO dispatch">
@@ -134,7 +148,7 @@ label{display:block;margin:12px 0 4px;font-size:13px;color:var(--dim)}
         <input type="file" id="file" accept="audio/*,video/*" hidden>
       </div>
 
-      <div class="card">
+      <div class="card" data-when="role=station">
         <h3 style="margin-top:0">Transcription</h3>
         <div class="seg">
           <label><input type="radio" name="engine" value="device"><span>On this phone</span></label>

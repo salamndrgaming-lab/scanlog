@@ -1,5 +1,6 @@
 import { correct, redact } from "./extract.js";
 import { SR, Segmenter, resampleTo16k, wavBlob, Store, Tracker, toCSV, toGeoJSON } from "./core.js";
+import { RemoteStore, Pusher } from "./sync.js";
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -16,6 +17,7 @@ const DEFAULTS = {
   source: "stream", feed: "", relay: "", channel: "Scanner", engine: "device", model: "Xenova/whisper-base.en",
   device: "auto", apiBase: "https://api.groq.com/openai/v1", apiKey: "", apiModel: "whisper-large-v3-turbo",
   threshold: 9, monitor: true, redact: true, keepAudioDays: 7,
+  role: "station", syncKey: "",   // station = this device listens; viewer = shows a station's live log
 };
 let cfg = { ...DEFAULTS };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem("scanlog.cfg") || "{}")); } catch {}
@@ -32,12 +34,15 @@ function streamURL() {
 const canAutoRelay = () => !cfg.relay.trim() && !state.builtinRelay && !["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
 
 /* ------------------------------------------------------------ state */
-const store = await new Store().open();
+const VIEWER = cfg.role === "viewer";
+const store = VIEWER ? await new RemoteStore(cfg.syncKey).open() : await new Store().open();
 const tracker = new Tracker(store, TEST?.geocode ? { geocoder: TEST.geocode } : {});
 const state = { running: false, queue: [], busy: false, cat: null, q: "", hours: 24, tab: "live", heard: 0, lastTx: null, modelStatus: "", builtinRelay: false, reconnecting: false };
 let ctx, srcNode, capNode, gain, audioEl, micStream, seg, wakeLock, silentSince = null, worker, workerReqs = {}, reqId = 0;
 const OPEN_TIMEOUT_MS = 15000;
 const SILENT = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQQAAAAAAAAA";
+let tabStream = null, syncState = { err: null, at: 0 };
+const pusher = VIEWER ? null : new Pusher(store, () => cfg.syncKey, (err, at) => { syncState = { err, at: at || syncState.at }; renderStatus(); });
 let reconnectT = null, backoff = 2000, watchdog = null, lastPos = 0, stuckSince = null;
 
 /* ------------------------------------------------------------ transcription */
@@ -86,6 +91,7 @@ async function pump() {
       if (cfg.redact) text = redact(text, {});
       const { tx, incident, ex } = await tracker.ingest({ ts: s.start, text, channel: s.channel, source: s.channel, duration: +(s.samples.length / SR).toFixed(1), confidence: null, audio });
       state.lastTx = tx.ts; state.heard++;
+      pusher?.clip(tx, s.samples); pusher?.schedule();
       if (incident && ex.priority <= 1 && document.hidden === false && navigator.vibrate) navigator.vibrate(120);
       refresh();
     } catch (e) { toast(e.message); console.error(e); }
@@ -106,6 +112,17 @@ registerProcessor('cap',Cap)`;
 async function start() {
   if (state.running) return;
   ctx = new (window.AudioContext || window.webkitAudioContext)();
+  let tabReq = null;
+  if (cfg.source === "tab") {
+    if (!navigator.mediaDevices?.getDisplayMedia) { ctx.close(); throw new Error("Browser-tab audio needs Chrome or Edge on a computer."); }
+    // Chrome shows a picker: choose the tab playing the feed and keep "Share tab audio" on.
+    tabReq = navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 1, width: 320, height: 240 },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: false },
+      preferCurrentTab: false, selfBrowserSurface: "exclude", systemAudio: "include", surfaceSwitching: "include",
+    });
+    state.connecting = "choose the feed tab…"; renderStatus();
+  }
   if (cfg.source === "stream" && cfg.feed.trim()) {
     // iOS only lets audio start inside the tap itself. Unlock the element now, synchronously,
     // with a silent clip; later play() calls (relay retry, reconnects) are then allowed.
@@ -115,8 +132,20 @@ async function start() {
   }
   await ctx.resume();
   seg = new Segmenter({ threshold_db: +cfg.threshold });
-  const chan = cfg.source === "mic" ? (cfg.channel || "Mic") : (cfg.channel || "Stream");
-  if (cfg.source === "mic") {
+  const chan = cfg.source === "mic" ? (cfg.channel || "Mic") : cfg.source === "tab" ? (cfg.channel || "Feed tab") : (cfg.channel || "Stream");
+  if (cfg.source === "tab") {
+    try { tabStream = await tabReq; }
+    catch (e) { state.connecting = ""; ctx.close(); if (e.name === "NotAllowedError") { renderStatus(); return; } throw e; }
+    state.connecting = "";
+    const tracks = tabStream.getAudioTracks();
+    if (!tracks.length) {
+      tabStream.getTracks().forEach(t => t.stop()); tabStream = null; ctx.close();
+      banner("No audio was shared. Tap Start again, pick the tab that's playing the feed, and make sure “Share tab audio” is switched on.");
+      renderStatus(); return;
+    }
+    tracks[0].onended = () => { if (state.running) { stop(); toast("Tab sharing stopped"); } };
+    srcNode = ctx.createMediaStreamSource(new MediaStream(tracks));
+  } else if (cfg.source === "mic") {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
     srcNode = ctx.createMediaStreamSource(micStream);
   } else {
@@ -203,6 +232,7 @@ async function stop() {
   try { enqueue(seg?.flush() || [], cfg.channel); } catch {}
   audioEl?.pause(); if (audioEl) audioEl.src = ""; audioEl = null;
   micStream?.getTracks().forEach(t => t.stop()); micStream = null;
+  tabStream?.getTracks().forEach(t => t.stop()); tabStream = null;
   try { await ctx?.close(); } catch {}
   wakeLock?.release?.(); wakeLock = null; hideBanner(); renderStatus();
 }
@@ -232,12 +262,25 @@ function banner(m) { const b = $("#banner"); b.textContent = m; b.hidden = false
 function hideBanner() { $("#banner").hidden = true; }
 function meter(db) { const m = $("#meter i"); if (m) m.style.width = Math.max(0, Math.min(100, (db + 70) * 1.6)) + "%"; }
 
+function ago(ms) { const s = Math.round((Date.now() - ms) / 1000); return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`; }
 function renderStatus() {
+  if (VIEWER) {
+    $("#go").hidden = true; $("#meter").hidden = true;
+    const e = store.error;
+    $("#dot").classList.toggle("on", !e && !!store.snap.updated && Date.now() - store.snap.updated < 15 * 60000);
+    $("#srcline").textContent = !cfg.syncKey ? "Viewer: add the sync passphrase in Setup"
+      : e ? (e.code === "no-db" ? "Viewer: database not set up yet" : e.code === "no-station" ? "Viewer: waiting for the PC to sync" : e.code === "wrong-key" ? "Viewer: wrong passphrase" : "Viewer: can't reach the log, retrying")
+      : store.snap.updated ? `Live from PC · synced ${ago(store.snap.updated)}` : "Viewer: waiting for the PC";
+    $("#queue").textContent = "";
+    return;
+  }
   $("#go").textContent = state.running || state.connecting ? "Stop listening" : "Start listening";
   $("#go").classList.toggle("on", !!(state.running || state.connecting));
   $("#dot").classList.toggle("on", state.running);
   $("#srcline").textContent = state.connecting ? state.connecting : state.running ? (state.reconnecting ? "reconnecting…" : cfg.source === "mic" ? "Microphone" : (cfg.channel || "Stream")) : "Not listening";
-  $("#queue").textContent = state.queue.length || state.busy ? `${state.queue.length + (state.busy ? 1 : 0)} clip(s) transcribing` : "";
+  $("#queue").textContent = state.queue.length || state.busy ? `${state.queue.length + (state.busy ? 1 : 0)} clip(s) transcribing`
+    : pusher?.enabled() ? (syncState.err ? "sync error" : syncState.at ? `synced ${ago(syncState.at)}` : "") : "";
+  if (syncState.err && pusher?.enabled()) $("#queue").title = syncState.err.message;
 }
 
 function go(tab) {
@@ -348,6 +391,8 @@ function bindSetup() {
     saveCfg(); vis();
     if (el.name === "monitor" && gain) gain.gain.value = cfg.monitor ? 1 : 0;
     if (["model", "engine", "device"].includes(el.name)) { worker?.terminate(); worker = null; setModel(""); }
+    if (el.name === "role" || (el.name === "syncKey" && VIEWER)) { clearTimeout(bindSetup.t); bindSetup.t = setTimeout(() => location.reload(), el.name === "role" ? 0 : 1200); }
+    if (el.name === "syncKey" && !VIEWER) { clearTimeout(bindSetup.p); bindSetup.p = setTimeout(() => pusher.pushSnapshot(), 1500); }
   });
   f.addEventListener("submit", e => e.preventDefault());
   vis();
@@ -367,13 +412,21 @@ $("#chips").onclick = e => { const b = e.target.closest("button"); if (!b) retur
 $("#hours").onchange = e => { state.hours = +e.target.value; refresh(); };
 let qt; $("#q").oninput = e => { clearTimeout(qt); qt = setTimeout(() => { state.q = e.target.value.trim(); refresh(); }, 250); };
 $("#file").onchange = e => { const f = e.target.files[0]; if (f) importFile(f).catch(err => toast(err.message)); e.target.value = ""; };
-$("#clear").onclick = async () => { if ($("#clear").dataset.armed) { await store.clear(); delete $("#clear").dataset.armed; $("#clear").textContent = "Delete all data"; refresh(); toast("All data deleted"); } else { $("#clear").dataset.armed = 1; $("#clear").textContent = "Tap again to confirm"; } };
+$("#clear").onclick = async () => { if (VIEWER) return toast("This phone is a viewer: delete data on the PC."); if ($("#clear").dataset.armed) { await store.clear(); pusher?.pushSnapshot(); delete $("#clear").dataset.armed; $("#clear").textContent = "Delete all data"; refresh(); toast("All data deleted"); } else { $("#clear").dataset.armed = 1; $("#clear").textContent = "Tap again to confirm"; } };
 $("#preload").onclick = () => { if (cfg.engine !== "device") return toast("On-device engine not selected"); worker?.terminate(); worker = null; initWorker(); };
 
-bindSetup(); renderStatus(); go(cfg.feed || cfg.source === "mic" ? "live" : "setup");
-if (!cfg.feed && cfg.source !== "mic") toast("Start by choosing an audio source");
-setInterval(() => { tracker.housekeeping(); }, 60000);
-store.prune(cfg.keepAudioDays).catch(() => {});
+bindSetup(); renderStatus(); go(VIEWER ? (cfg.syncKey ? "incidents" : "setup") : cfg.feed || cfg.source !== "stream" ? "live" : "setup");
+if (!VIEWER && !cfg.feed && cfg.source === "stream") toast("Start by choosing an audio source");
+if (VIEWER) {
+  // poll the PC's log every 15 s while the app is open
+  setInterval(async () => { if (document.hidden) return; try { if (await store.poll()) refresh(); } catch {} renderStatus(); }, 15000);
+  document.addEventListener("visibilitychange", async () => { if (!document.hidden) { try { if (await store.poll()) refresh(); } catch {} renderStatus(); } });
+} else {
+  setInterval(async () => { const before = JSON.stringify((await store.recentIncidents(Date.now() / 1000 - 86400)).map(i => i.status)); await tracker.housekeeping();
+    if (JSON.stringify((await store.recentIncidents(Date.now() / 1000 - 86400)).map(i => i.status)) !== before) pusher.schedule(); }, 60000);
+  setInterval(() => { if (state.running) pusher.schedule(); }, 5 * 60000);   // heartbeat so phones see the PC is live
+  store.prune(cfg.keepAudioDays).catch(() => {});
+}
 setInterval(refresh, 10000);
 if ("serviceWorker" in navigator && !TEST) navigator.serviceWorker.register("./sw.js").catch(() => {});
 window.__scanlog = { store, tracker, enqueue, importFile, state };

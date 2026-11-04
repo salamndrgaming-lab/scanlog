@@ -18,6 +18,16 @@ Other options: Netlify Drop (app.netlify.com/drop, drag the folder), GitHub Page
 Then on your phone, open the URL and add it to the home screen (iPhone: Share → *Add to
 Home Screen*; Android: menu → *Install app*).
 
+## PC listens, phone watches (free, live)
+
+Broadcastify's free listening only works in its own web player, so let a computer do the listening:
+
+1. **One time:** Vercel → this project → Storage → Create Database → **Upstash Redis** (free plan) → Connect to this project → redeploy.
+2. **PC (Chrome or Edge):** open the feed in Broadcastify's player in one tab. Open ScanLog in another tab → Setup → This device: **Listen & log**, pick a **Sync passphrase**, Audio source: **Browser tab**. Live → **Start listening** → choose the Broadcastify tab, keep “Share tab audio” on. Keep both tabs open.
+3. **Phone:** open ScanLog → Setup → This device: **View PC's log**, same passphrase. Incidents, map, transcripts and audio clips update about every 20–30 seconds.
+
+The first PC to sync claims the passphrase; only that passphrase can read or change the log. Audio clips are kept 24 hours.
+
 ## Using it
 
 1. **Setup → Audio source**
@@ -63,6 +73,7 @@ You can also feed it a recording: Setup → *Process a recording…*
 | `extract.js` | call-type / address / unit / status rules (same rules as the Python `extract.py`; `tests/` checks they agree) |
 | `whisper-worker.js` | on-device Whisper (transformers.js) |
 | `sw.js`, `manifest.webmanifest`, `icon*` | home-screen app and offline shell |
+| `sync.js`, `api/sync.js` | live PC → phone sync (Upstash Redis via Vercel Storage) |
 | `relay-worker.js` | optional Cloudflare Worker stream relay |
 | `api/relay.js` | built-in stream relay (Vercel Edge Function); the app retries through it automatically when a feed won't open |
 | `vercel.json` | Vercel config: no build step, service-worker / manifest / permissions headers |
