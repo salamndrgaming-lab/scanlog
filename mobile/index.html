@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e12">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ScanLog">
+<title>ScanLog</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--bg:#0b0e12;--panel:#12161c;--panel2:#181d25;--line:#232a35;--text:#d8dee8;--dim:#7d8898;
+  --violent:#ff4d5e;--fire:#ff9a2e;--ems:#3fb8ff;--traffic:#f5d142;--property:#b48cff;--other:#6fd39a;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;--top:env(safe-area-inset-top);--bot:env(safe-area-inset-bottom)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Roboto,sans-serif;overscroll-behavior:none}
+header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:calc(var(--top) + 10px) 16px 10px}
+.brand{font:700 15px var(--mono);letter-spacing:.08em;display:flex;align-items:center;gap:8px}
+.brand b{color:var(--violent)} .brand small{color:var(--dim);font-weight:400;letter-spacing:0;margin-left:auto;font-size:11px}
+#dot{width:9px;height:9px;border-radius:50%;background:#3d4552}
+#dot.on{background:#29e07a;box-shadow:0 0 8px #29e07a;animation:p 1.6s infinite} @keyframes p{50%{opacity:.35}}
+#stat{font:12px var(--mono);color:var(--dim);margin-top:4px} #stat b{color:var(--text)}
+main{padding:12px 14px calc(var(--bot) + 84px)}
+nav{position:fixed;bottom:0;left:0;right:0;z-index:6;display:flex;background:var(--panel);border-top:1px solid var(--line);padding-bottom:var(--bot)}
+nav button{flex:1;background:none;border:0;color:var(--dim);padding:10px 0 9px;font:600 11px system-ui;display:flex;flex-direction:column;align-items:center;gap:3px}
+nav button svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8}
+nav button[aria-current=true]{color:var(--text)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+#go{width:100%;padding:16px;border-radius:12px;border:0;background:#1f6f45;color:#fff;font:700 17px system-ui}
+#go.on{background:#5a1f26}
+#meter{height:6px;background:var(--panel2);border-radius:3px;margin:12px 0 6px;overflow:hidden}
+#meter i{display:block;height:100%;width:0;background:linear-gradient(90deg,#29e07a,#f5d142 70%,#ff4d5e);transition:width .1s}
+.m{font:12px var(--mono);color:var(--dim)} .u{color:#9fb0c4}
+#model.bad{color:var(--violent)}
+#banner{background:#3a2a10;border:1px solid #6b4d16;color:#ffd99a;border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:12px}
+h3{font:600 11px var(--mono);letter-spacing:.12em;color:var(--dim);text-transform:uppercase;margin:16px 2px 8px}
+.tx{padding:9px 2px;border-bottom:1px solid var(--line)} .tx.hit{color:#fff}
+.inc{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--c);border-radius:10px;padding:11px 12px;margin-bottom:8px}
+.inc .r{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.addr{color:#c4ccd8;margin:2px 0}
+.badge{font:700 10px var(--mono);padding:2px 6px;border-radius:4px;background:#222a35;color:var(--dim);text-transform:uppercase;white-space:nowrap}
+.badge.on_scene{color:#ffd166}.badge.en_route,.badge.dispatched{color:#7cc7ff}.badge.transporting{color:#c39bff}
+.filters{display:flex;gap:8px;margin-bottom:10px}
+#chips{display:flex;gap:6px;overflow-x:auto;margin:0 -14px 10px;padding:0 14px;scrollbar-width:none}
+#chips button{flex:none;border:1px solid var(--line);background:var(--panel2);color:var(--text);padding:7px 12px;border-radius:999px;font-size:13px}
+#chips button[aria-pressed=true]{border-color:#8a96a6;background:#222a35}
+#chips i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+input,select{background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:10px 12px;border-radius:10px;font:inherit;font-size:16px;width:100%}
+.filters select{width:auto}
+#map{height:calc(100vh - 190px - var(--top) - var(--bot));border-radius:14px;overflow:hidden;border:1px solid var(--line);isolation:isolate}
+.leaflet-container{background:#0d1117}
+.empty{color:var(--dim);text-align:center;padding:24px 10px}
+label{display:block;margin:12px 0 4px;font-size:13px;color:var(--dim)}
+.seg{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px}
+.seg label{flex:1;margin:0;text-align:center}
+.seg input{display:none} .seg span{display:block;padding:9px 4px;border-radius:8px;color:var(--text);font-size:14px}
+.seg input:checked+span{background:#2a3340}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px}
+.row label{margin:0;color:var(--text);font-size:15px}
+.row input[type=checkbox]{width:auto;transform:scale(1.3)}
+.hint{font-size:12.5px;color:var(--dim);margin:6px 0 0}
+.btn{display:block;width:100%;text-align:center;background:var(--panel2);border:1px solid var(--line);color:var(--text);padding:12px;border-radius:10px;font:600 14px system-ui;margin-top:8px}
+.btn.danger{color:var(--violent)} .two{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+#scrim{position:fixed;inset:0;background:#0008;z-index:9}
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:10;max-height:85vh;background:var(--panel);border-radius:18px 18px 0 0;border-top:1px solid var(--line);
+  transform:translateY(105%);transition:transform .22s;display:flex;flex-direction:column;padding-bottom:var(--bot)}
+#sheet.open{transform:none}
+#sheet .hd{padding:16px 18px 12px;border-bottom:1px solid var(--line)} #sheet h2{margin:2px 0 4px;font-size:20px}
+#sheet .bd{overflow:auto;padding:4px 18px 20px}
+#sheet .x{position:absolute;right:12px;top:10px;background:none;border:0;color:var(--dim);font-size:28px;padding:4px 8px}
+.dtx{padding:10px 0;border-bottom:1px solid var(--line)}
+.play{margin-top:6px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:6px 12px;font-size:13px}
+#toast{position:fixed;left:14px;right:14px;bottom:calc(var(--bot) + 76px);z-index:20;background:#222a35;border:1px solid var(--line);border-radius:10px;padding:11px 14px;font-size:14px;
+  opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none} #toast.on{opacity:1;transform:none}
+@media (min-width:700px){main{max-width:640px;margin:0 auto}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span id="dot"></span>SCAN<b>LOG</b><small>Memphis · Shelby Co.</small></div>
+  <div id="stat"></div>
+</header>
+
+<main>
+  <div id="banner" hidden></div>
+
+  <section data-view="live">
+    <div class="card">
+      <button id="go">Start listening</button>
+      <div id="meter"><i></i></div>
+      <div class="m" style="display:flex;justify-content:space-between"><span id="srcline"></span><span id="queue"></span></div>
+      <div class="m" id="model" style="margin-top:4px"></div>
+    </div>
+    <h3>Live radio traffic</h3>
+    <div id="txfeed"></div>
+  </section>
+
+  <section data-view="incidents" hidden>
+    <div id="chips"></div>
+    <div class="filters">
+      <input type="search" id="q" placeholder="Search address, unit, words…">
+      <select id="hours"><option value="1">1h</option><option value="6">6h</option><option value="24" selected>24h</option><option value="72">3d</option><option value="168">7d</option></select>
+    </div>
+    <div id="list"></div>
+  </section>
+
+  <section data-view="map" hidden><div id="map"></div></section>
+
+  <section data-view="setup" hidden>
+    <form id="setupForm" autocomplete="off">
+      <div class="card">
+        <h3 style="margin-top:0">Audio source</h3>
+        <div class="seg">
+          <label><input type="radio" name="source" value="stream"><span>Online feed</span></label>
+          <label><input type="radio" name="source" value="mic"><span>Microphone</span></label>
+        </div>
+        <div data-when="source=stream">
+          <label for="feed">Broadcastify feed ID or stream URL</label>
+          <input id="feed" name="feed" inputmode="url" placeholder="e.g. 12345 or https://…">
+          <p class="hint">On broadcastify.com go to Tennessee → Shelby County, open “Memphis Police and Shelby County Sheriff” or “Memphis Fire Department”. The number at the end of the page address is the feed ID.</p>
+          <label for="relay">Relay (only if the feed won’t open)</label>
+          <input id="relay" name="relay" inputmode="url" placeholder="https://scanlog-relay.you.workers.dev">
+          <div class="row"><label for="monitor">Play audio while logging</label><input type="checkbox" id="monitor" name="monitor"></div>
+        </div>
+        <p class="hint" data-when="source=mic">Put the phone next to a scanner radio, or next to another device playing a feed. Works with any audio, no setup.</p>
+        <label for="channel">Channel label</label>
+        <input id="channel" name="channel" placeholder="MPD / SCSO dispatch">
+        <label for="file" class="btn" style="margin-top:14px">Process a recording…</label>
+        <input type="file" id="file" accept="audio/*,video/*" hidden>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Transcription</h3>
+        <div class="seg">
+          <label><input type="radio" name="engine" value="device"><span>On this phone</span></label>
+          <label><input type="radio" name="engine" value="cloud"><span>Cloud API</span></label>
+        </div>
+        <div data-when="engine=device">
+          <label for="model">Model</label>
+          <select id="model" name="model">
+            <option value="Xenova/whisper-tiny.en">Tiny (~40 MB, fastest)</option>
+            <option value="Xenova/whisper-base.en">Base (~80 MB, more accurate)</option>
+          </select>
+          <p class="hint">Free and private: audio never leaves the phone. Downloads once over Wi-Fi. Newer phones keep up with one busy channel.</p>
+          <button type="button" class="btn" id="preload">Download model now</button>
+        </div>
+        <div data-when="engine=cloud">
+          <label for="apiBase">API endpoint</label>
+          <input id="apiBase" name="apiBase" inputmode="url">
+          <label for="apiModel">Model</label>
+          <input id="apiModel" name="apiModel">
+          <label for="apiKey">API key</label>
+          <input id="apiKey" name="apiKey" type="password" placeholder="Stored only on this phone">
+          <p class="hint">Groq (whisper-large-v3-turbo) is fast and cheap; OpenAI works too (endpoint https://api.openai.com/v1, model whisper-1). Most accurate, uses data.</p>
+        </div>
+        <label for="threshold">Voice sensitivity: <span id="thrv"></span> dB</label>
+        <input type="range" id="threshold" name="threshold" min="4" max="20" step="1" style="padding:0">
+        <p class="hint">Raise it if static creates junk clips; lower it if quiet voices are missed.</p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0">Privacy & data</h3>
+        <div class="row"><label for="redact">Remove birth dates and SSNs from transcripts</label><input type="checkbox" id="redact" name="redact"></div>
+        <label for="keepAudioDays">Keep audio clips (days)</label>
+        <input id="keepAudioDays" name="keepAudioDays" type="number" min="1" max="60">
+        <h3>Export (time window from Incidents tab)</h3>
+        <div class="two">
+          <button type="button" class="btn" data-export="csv">CSV</button>
+          <button type="button" class="btn" data-export="geojson">GeoJSON</button>
+          <button type="button" class="btn" data-export="md">Log</button>
+        </div>
+        <button type="button" class="btn danger" id="clear">Delete all data</button>
+        <p class="hint">Everything is stored on this phone only. Transcripts are automatic and unverified.</p>
+      </div>
+    </form>
+  </section>
+</main>
+
+<nav>
+  <button data-tab="live"><svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 16 0M7.5 12a4.5 4.5 0 0 1 9 0"/><circle cx="12" cy="12" r="1.5"/><path d="M12 14v6"/></svg>Live</button>
+  <button data-tab="incidents"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>Incidents</button>
+  <button data-tab="map"><svg viewBox="0 0 24 24"><path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/></svg>Map</button>
+  <button data-tab="setup"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></svg>Setup</button>
+</nav>
+
+<div id="scrim" hidden></div>
+<div id="sheet" role="dialog" aria-modal="true"><button class="x" aria-label="Close">×</button><div class="hd"></div><div class="bd"></div></div>
+<div id="toast" role="status"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
