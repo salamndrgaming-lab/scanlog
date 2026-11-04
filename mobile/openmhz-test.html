@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenMHz check</title>
+<style>
+:root{--bg:#0b0e12;--panel:#12161c;--line:#232a35;--text:#d8dee8;--dim:#7d8898;--ok:#29e07a;--bad:#ff4d5e}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,sans-serif;padding:16px}
+h1{font-size:18px;margin:0 0 4px} p{color:var(--dim);margin:0 0 14px}
+#go{width:100%;padding:14px;border:0;border-radius:12px;background:#1f6f45;color:#fff;font:700 16px system-ui}
+.row{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px;word-break:break-word}
+.ok{color:var(--ok)} .bad{color:var(--bad)} code{font-size:12px;color:var(--dim)}
+#copy{display:none;width:100%;margin-top:14px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:600 15px system-ui}
+</style>
+</head>
+<body>
+<h1>OpenMHz check</h1>
+<p>Tap the button, wait a few seconds, then tap “Copy results” and paste them back in the chat.</p>
+<button id="go">Run check</button>
+<div id="out"></div>
+<button id="copy">Copy results</button>
+<script>
+const out = document.getElementById("out"), log = [];
+const add = (ok, msg) => { log.push((ok ? "OK  " : "FAIL ") + msg); const d = document.createElement("div"); d.className = "row " + (ok ? "ok" : "bad"); d.textContent = (ok ? "✓ " : "✗ ") + msg; out.append(d); };
+const API = "https://api.openmhz.com";
+async function getJSON(url) {
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
+  const t = await r.text();
+  try { return [r.status, JSON.parse(t)]; } catch { return [r.status, null, t.slice(0, 80)]; }
+}
+document.getElementById("go").onclick = async () => {
+  out.textContent = ""; log.length = 0;
+  log.push("UA " + navigator.userAgent);
+  let sys = [];
+  try {
+    const [s, j, raw] = await getJSON(API + "/systems");
+    if (!j) { add(false, `systems list: HTTP ${s}, not JSON (${raw})`); }
+    else {
+      const all = j.systems || j;
+      sys = all.filter(x => /memphis|shelby/i.test([x.name, x.city, x.county, x.description, x.shortName].join(" ")));
+      add(true, `systems list: ${all.length} systems; Memphis/Shelby: ${sys.map(x => `${x.shortName} (“${x.name}”)`).join(", ") || "none found"}`);
+    }
+  } catch (e) { add(false, "systems list blocked: " + e.message); }
+  if (!sys.length) { const m = prompt("Type the system name from the OpenMHz page address (openmhz.com/system/NAME):"); if (m) sys = [{ shortName: m.trim() }]; }
+  for (const s of sys.slice(0, 3)) {
+    try {
+      const [st, j, raw] = await getJSON(`${API}/${s.shortName}/calls`);
+      if (!j) { add(false, `${s.shortName} calls: HTTP ${st}, not JSON (${raw})`); continue; }
+      const calls = j.calls || [];
+      add(true, `${s.shortName} calls: ${calls.length} recent; newest ${calls[0] ? new Date(calls[0].time).toLocaleTimeString() : "-"}; keys: ${Object.keys(calls[0] || {}).join(",")}`);
+      const c = calls[0];
+      if (c) {
+        add(true, `audio url host: ${new URL(c.url).host} (${c.url.split(".").pop()})`);
+        try { const r = await fetch(c.url); const b = await r.arrayBuffer(); add(r.ok, `audio download: HTTP ${r.status}, ${b.byteLength} bytes, readable by app`);
+          try { const ac = new (window.AudioContext || window.webkitAudioContext)(); const buf = await ac.decodeAudioData(b); add(true, `audio decodes: ${buf.duration.toFixed(1)} s`); ac.close(); } catch (e) { add(false, "audio decode: " + e.message); }
+        } catch (e) { add(false, "audio download blocked for app: " + e.message); }
+      }
+      try { const [ts, tj] = await getJSON(`${API}/${s.shortName}/talkgroups`); const n = tj && Object.keys(tj.talkgroups || {}).length; add(!!tj, `${s.shortName} talkgroups: HTTP ${ts}, ${n ?? "?"} listed`); } catch (e) { add(false, "talkgroups blocked: " + e.message); }
+    } catch (e) { add(false, `${s.shortName} calls blocked: ${e.message}`); }
+  }
+  document.getElementById("copy").style.display = "block";
+};
+document.getElementById("copy").onclick = async () => {
+  const t = log.join("\n");
+  try { await navigator.clipboard.writeText(t); document.getElementById("copy").textContent = "Copied — paste it in the chat"; }
+  catch { prompt("Copy this:", t); }
+};
+</script>
+</body>
+</html>
