@@ -36,6 +36,8 @@ const store = await new Store().open();
 const tracker = new Tracker(store, TEST?.geocode ? { geocoder: TEST.geocode } : {});
 const state = { running: false, queue: [], busy: false, cat: null, q: "", hours: 24, tab: "live", heard: 0, lastTx: null, modelStatus: "", builtinRelay: false, reconnecting: false };
 let ctx, srcNode, capNode, gain, audioEl, micStream, seg, wakeLock, silentSince = null, worker, workerReqs = {}, reqId = 0;
+const OPEN_TIMEOUT_MS = 15000;
+const SILENT = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQQAAAAAAAAA";
 let reconnectT = null, backoff = 2000, watchdog = null, lastPos = 0, stuckSince = null;
 
 /* ------------------------------------------------------------ transcription */
@@ -104,6 +106,13 @@ registerProcessor('cap',Cap)`;
 async function start() {
   if (state.running) return;
   ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (cfg.source === "stream" && cfg.feed.trim()) {
+    // iOS only lets audio start inside the tap itself. Unlock the element now, synchronously,
+    // with a silent clip; later play() calls (relay retry, reconnects) are then allowed.
+    audioEl = new Audio(); audioEl.crossOrigin = "anonymous"; audioEl.preload = "none";
+    audioEl.src = SILENT; audioEl.play().catch(() => {});
+    state.connecting = "connecting…"; renderStatus();
+  }
   await ctx.resume();
   seg = new Segmenter({ threshold_db: +cfg.threshold });
   const chan = cfg.source === "mic" ? (cfg.channel || "Mic") : (cfg.channel || "Stream");
@@ -113,7 +122,6 @@ async function start() {
   } else {
     if (!cfg.feed.trim()) { toast("Enter a Broadcastify feed ID or stream URL in Setup"); go("setup"); ctx.close(); return; }
     state.builtinRelay = false; backoff = 2000;
-    audioEl = new Audio(); audioEl.crossOrigin = "anonymous"; audioEl.preload = "none";
     // Edge relays cut long responses off and feeds drop: while listening, reconnect the same
     // element (same segmenter and queue, so nothing already captured is lost).
     audioEl.onerror = audioEl.onended = () => scheduleReconnect();
@@ -121,13 +129,28 @@ async function start() {
     srcNode = ctx.createMediaElementSource(audioEl);
     gain = ctx.createGain(); gain.gain.value = cfg.monitor ? 1 : 0;
     srcNode.connect(gain).connect(ctx.destination);
-    const open = async () => { audioEl.src = streamURL(); try { await audioEl.play(); return true; } catch { return false; } };
+    let why = "";
+    const open = async () => {   // never hang: give up after OPEN_TIMEOUT_MS
+      if (!audioEl) return false;   // Stop tapped while connecting
+      audioEl.src = streamURL();
+      let timer;
+      try {
+        await Promise.race([audioEl.play(), new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("no answer from the stream")), OPEN_TIMEOUT_MS); })]);
+        return true;
+      } catch (e) {
+        const code = audioEl?.error?.code;
+        why = e.name === "NotAllowedError" ? "the browser blocked audio playback" : code ? ["", "aborted", "network error", "can't decode the audio", "stream refused or not found"][code] : e.message;
+        audioEl?.pause(); return false;
+      } finally { clearTimeout(timer); }
+    };
     let ok = await open();
-    if (!ok && canAutoRelay()) { state.builtinRelay = true; ok = await open(); }   // retry once via /api/relay
+    if (!ok && canAutoRelay()) { state.builtinRelay = true; state.connecting = "connecting via relay…"; renderStatus(); ok = await open(); }   // retry once via /api/relay
+    if (!state.connecting) return;   // stopped while connecting
+    state.connecting = "";
     if (!ok) {
       state.builtinRelay = false;
       await stop();
-      banner("Couldn't open this stream. Check the feed ID. If the feed plays in the Broadcastify app, its server is blocking browser access: add a relay in Setup (see README), or switch to Microphone mode.");
+      banner(`Couldn't open this stream (${why}). Check the feed ID. If the feed plays in the Broadcastify app, its server is blocking browser access: add a relay in Setup (see README), or switch to Microphone mode.`);
       return;
     }
     lastPos = 0; stuckSince = null;
@@ -174,7 +197,7 @@ function scheduleReconnect() {
 }
 
 async function stop() {
-  state.running = false;
+  state.running = false; state.connecting = "";
   clearTimeout(reconnectT); reconnectT = null; clearInterval(watchdog); watchdog = null; state.reconnecting = false;
   if (audioEl) audioEl.onerror = audioEl.onended = audioEl.onplaying = null;
   try { enqueue(seg?.flush() || [], cfg.channel); } catch {}
@@ -210,10 +233,10 @@ function hideBanner() { $("#banner").hidden = true; }
 function meter(db) { const m = $("#meter i"); if (m) m.style.width = Math.max(0, Math.min(100, (db + 70) * 1.6)) + "%"; }
 
 function renderStatus() {
-  $("#go").textContent = state.running ? "Stop listening" : "Start listening";
-  $("#go").classList.toggle("on", state.running);
+  $("#go").textContent = state.running || state.connecting ? "Stop listening" : "Start listening";
+  $("#go").classList.toggle("on", !!(state.running || state.connecting));
   $("#dot").classList.toggle("on", state.running);
-  $("#srcline").textContent = state.running ? (state.reconnecting ? "reconnecting…" : cfg.source === "mic" ? "Microphone" : (cfg.channel || "Stream")) : "Not listening";
+  $("#srcline").textContent = state.connecting ? state.connecting : state.running ? (state.reconnecting ? "reconnecting…" : cfg.source === "mic" ? "Microphone" : (cfg.channel || "Stream")) : "Not listening";
   $("#queue").textContent = state.queue.length || state.busy ? `${state.queue.length + (state.busy ? 1 : 0)} clip(s) transcribing` : "";
 }
 
@@ -330,7 +353,7 @@ function bindSetup() {
   vis();
 }
 
-$("#go").onclick = () => (state.running ? stop() : start().catch(e => { toast(e.message); stop(); }));
+$("#go").onclick = () => (state.running || state.connecting ? stop() : start().catch(async e => { await stop(); banner("Couldn't start listening: " + e.message); }));
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => go(b.dataset.tab));
 document.body.addEventListener("click", async e => {
   const inc = e.target.closest("[data-inc]"); if (inc) return openInc(+inc.dataset.inc);
