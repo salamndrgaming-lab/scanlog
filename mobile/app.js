@@ -16,7 +16,7 @@ const HALLUCINATION = /^\W*(thank you( for watching)?|thanks for watching|you|by
 const DEFAULTS = {
   source: "stream", feed: "", relay: "", channel: "Scanner", engine: "device", model: "Xenova/whisper-base.en",
   device: "auto", apiBase: "https://api.groq.com/openai/v1", apiKey: "", apiModel: "whisper-large-v3-turbo",
-  threshold: 9, monitor: true, redact: true, keepAudioDays: 7,
+  threshold: 9, monitor: true, redact: true, keepAudioDays: 7, tabSilent: true,
   role: "station", syncKey: "",   // station = this device listens; viewer = shows a station's live log
 };
 let cfg = { ...DEFAULTS };
@@ -118,7 +118,7 @@ async function start() {
     // Chrome shows a picker: choose the tab playing the feed and keep "Share tab audio" on.
     tabReq = navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: 1, width: 320, height: 240 },
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: false },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, suppressLocalAudioPlayback: !!cfg.tabSilent },   // silent on the PC's speakers, still captured
       preferCurrentTab: false, selfBrowserSurface: "exclude", systemAudio: "include", surfaceSwitching: "include",
     });
     state.connecting = "choose the feed tab…"; renderStatus();
@@ -144,6 +144,7 @@ async function start() {
       renderStatus(); return;
     }
     tracks[0].onended = () => { if (state.running) { stop(); toast("Tab sharing stopped"); } };
+    tracks[0].applyConstraints?.({ suppressLocalAudioPlayback: !!cfg.tabSilent }).catch(() => {});
     srcNode = ctx.createMediaStreamSource(new MediaStream(tracks));
   } else if (cfg.source === "mic") {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -390,6 +391,7 @@ function bindSetup() {
     cfg[el.name] = el.type === "checkbox" ? el.checked : el.type === "range" ? +el.value : el.value;
     saveCfg(); vis();
     if (el.name === "monitor" && gain) gain.gain.value = cfg.monitor ? 1 : 0;
+    if (el.name === "tabSilent" && tabStream) tabStream.getAudioTracks()[0]?.applyConstraints({ suppressLocalAudioPlayback: cfg.tabSilent }).catch(() => toast("Takes effect next time you start listening"));
     if (["model", "engine", "device"].includes(el.name)) { worker?.terminate(); worker = null; setModel(""); }
     if (el.name === "role" || (el.name === "syncKey" && VIEWER)) { clearTimeout(bindSetup.t); bindSetup.t = setTimeout(() => location.reload(), el.name === "role" ? 0 : 1200); }
     if (el.name === "syncKey" && !VIEWER) { clearTimeout(bindSetup.p); bindSetup.p = setTimeout(() => pusher.pushSnapshot(), 1500); }

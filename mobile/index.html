@@ -141,6 +141,7 @@ label{display:block;margin:12px 0 4px;font-size:13px;color:var(--dim)}
           <div class="row"><label for="monitor">Play audio while logging</label><input type="checkbox" id="monitor" name="monitor"></div>
         </div>
         <p class="hint" data-when="source=tab">On a computer in Chrome or Edge: play the feed in another tab (e.g. Broadcastify's player), tap Start listening, pick that tab and keep “Share tab audio” on.</p>
+        <div class="row" data-when="source=tab"><label for="tabSilent">Keep the feed silent on this computer (still logs)</label><input type="checkbox" id="tabSilent" name="tabSilent"></div>
         <p class="hint" data-when="source=mic">Put the phone next to a scanner radio, or next to another device playing a feed. Works with any audio, no setup.</p>
         <label for="channel">Channel label</label>
         <input id="channel" name="channel" placeholder="MPD / SCSO dispatch">

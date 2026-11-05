@@ -1,6 +1,6 @@
 // App-shell cache so ScanLog opens instantly and works offline (except live audio,
 // transcription APIs and map tiles, which always go to the network).
-const CACHE = "scanlog-v3";
+const CACHE = "scanlog-v4";
 const SHELL = ["./", "index.html", "app.js", "core.js", "extract.js", "sync.js", "whisper-worker.js", "manifest.webmanifest",
   "icon.svg", "icon-192.png", "icon-512.png", "icon-180.png",
   "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css", "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"];
