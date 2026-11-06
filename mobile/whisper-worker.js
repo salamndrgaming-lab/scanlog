@@ -8,8 +8,10 @@ let asr = null, loading = null;
 async function load(model, device) {
   if (asr && asr._model === model) return asr;
   const useGPU = device === "webgpu" || (device === "auto" && "gpu" in navigator && await navigator.gpu.requestAdapter().catch(() => null));
+  const big = /large|small/.test(model);
+  const f16 = useGPU && big && (await navigator.gpu.requestAdapter().catch(() => null))?.features?.has("shader-f16");
   const opts = useGPU
-    ? { device: "webgpu", dtype: { encoder_model: "fp32", decoder_model_merged: "q4" } }
+    ? { device: "webgpu", dtype: { encoder_model: f16 ? "fp16" : "fp32", decoder_model_merged: "q4" } }
     : { device: "wasm", dtype: "q8" };
   asr = await pipeline("automatic-speech-recognition", model, {
     ...opts,
@@ -27,7 +29,8 @@ onmessage = async ({ data }) => {
       await loading;
     } else if (data.type === "transcribe") {
       const p = await (loading || load(data.model, data.device));
-      const out = await p(data.samples, { chunk_length_s: 30, return_timestamps: false });
+      const multi = !/\.en$/.test(p._model);   // multilingual models (large-v3-turbo): force English
+      const out = await p(data.samples, { chunk_length_s: 30, return_timestamps: false, ...(multi ? { language: "english", task: "transcribe" } : {}) });
       postMessage({ type: "result", id: data.id, text: (out.text || "").trim() });
     }
   } catch (e) {

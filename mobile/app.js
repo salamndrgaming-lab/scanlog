@@ -62,6 +62,19 @@ function initWorker() {
 }
 function setModel(s, bad) { state.modelStatus = s; const el = $("#model"); if (el) { el.textContent = s; el.classList.toggle("bad", !!bad); } }
 
+/** Radio clean-up before speech recognition: remove DC and low rumble, then bring the
+ *  level up so quiet dispatchers aren't lost (gain capped so static isn't blown up). */
+function prepForASR(x) {
+  const y = new Float32Array(x.length);
+  let mean = 0; for (let i = 0; i < x.length; i++) mean += x[i]; mean /= x.length || 1;
+  const a = Math.exp(-2 * Math.PI * 200 / SR);   // one-pole high-pass at ~200 Hz
+  let px = 0, py = 0, peak = 0;
+  for (let i = 0; i < x.length; i++) { const v = x[i] - mean; py = a * (py + v - px); px = v; y[i] = py; peak = Math.max(peak, Math.abs(py)); }
+  const g = peak > 0 ? Math.min(0.9 / peak, 12) : 1;
+  for (let i = 0; i < y.length; i++) y[i] *= g;
+  return y;
+}
+
 async function transcribe(samples) {
   if (TEST?.transcribe) return TEST.transcribe(samples);
   if (cfg.engine === "cloud") {
@@ -85,7 +98,7 @@ async function pump() {
     const s = state.queue.shift(); renderStatus();
     const audio = wavBlob(s.samples);
     try {
-      let text = await transcribe(s.samples.slice());
+      let text = await transcribe(prepForASR(s.samples));
       if (HALLUCINATION.test(text || ".") || text.length < 2) continue;
       text = correct(text);
       if (cfg.redact) text = redact(text, {});
